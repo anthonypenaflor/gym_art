@@ -824,7 +824,7 @@ class QuadrotorEnv(gym.Env, gym_utils.EzPickle):
         self._reset()
 
         if self.spec is None:
-            self.spec = gym_reg.EnvSpec(id='Quadrotor-v0', max_episode_steps=self.ep_len)
+            self.spec = gym_reg.EnvSpec(id='Quadrotor-v0', max_episode_steps=self.ep_len, entry_point='gym_art.envs:QuadrotorEnv')
 
     def save_dyn_params(self, filename):
         import yaml
@@ -1092,6 +1092,7 @@ class QuadrotorEnv(gym.Env, gym_utils.EzPickle):
             y = self.goal[1]
         #Since being near the groud means crash we have to start above
         if z < 0.25 : z = 0.25 
+        z = 10
         pos = npa(x, y, z)
 
         ##############################################################
@@ -1185,7 +1186,7 @@ class UpDownPolicy(object):
         self.t = 0.
 
 def test_rollout(quad, dyn_randomize_every=None, dyn_randomization_ratio=None, 
-    render=True, traj_num=10, plot_step=None, plot_dyn_change=True, plot_thrusts=False,
+    render=True, traj_num=5, plot_step=None, plot_dyn_change=True, plot_thrusts=False,
     sense_noise=None, policy_type="mellinger", init_random_state=False, obs_repr="xyz_vxyz_rot_omega",csv_filename=None):
     import tqdm
     #############################
@@ -1236,7 +1237,7 @@ def test_rollout(quad, dyn_randomize_every=None, dyn_randomization_ratio=None,
     except:
         print('Observation space:', env.observation_space.spaces[0].low, env.observation_space[0].spaces[0].high, "size:", env.observation_space[0].spaces[0].high.size)
         print('Action space:', env.action_space[0].spaces[0].low, env.action_space[0].spaces[0].high, "size:", env.action_space[0].spaces[0].high.size)
-    # input('Press any key to continue ...')
+    input('Press any key to continue ...')
 
     ## Collected statistics for dynamics
     dyn_param_names = [
@@ -1470,7 +1471,7 @@ def parse_quad_args(argv):
     parser.add_argument(
         '-trj',"--traj_num",
         type=int,
-        default=10,
+        default=5,
         help="Number of trajectories to run"
     )
     parser.add_argument(
@@ -1563,5 +1564,5 @@ def main(argv):
 
 
 if __name__ == '__main__':
-    main(sys.argv)
+    main(sys.argv[1:])
 

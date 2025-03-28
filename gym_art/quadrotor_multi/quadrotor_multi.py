@@ -666,7 +666,7 @@ class QuadrotorEnv(gym.Env, Serializable):
                 dynamics_randomize_every=None, dyn_sampler_1=None, dyn_sampler_2=None,
                 raw_control=True, raw_control_zero_middle=True, dim_mode='3D', tf_control=False, sim_freq=200., sim_steps=2,
                 obs_repr="xyz_vxyz_R_omega", ep_time=4, obstacles_num=0, room_size=10, init_random_state=False, 
-                rew_coeff=None, sense_noise=None, verbose=False, gravity=GRAV, resample_goal=False, 
+                rew_coeff=None, sense_noise=None, verbose=True, gravity=GRAV, resample_goal=False, 
                 t2w_std=0.005, t2t_std=0.0005, excite=False, dynamics_simplification=False):
         np.seterr(under='ignore')
         """
@@ -776,12 +776,12 @@ class QuadrotorEnv(gym.Env, Serializable):
         # self.update_dynamics(dynamics_params=self.dynamics_params)
         print("QuadEnv: Dyn update time: ", time.time() - dyn_upd_start_time)
         
-        if self.verbose:
-            print("###############################################")
-            print("DYN RANDOMIZATION PARAMS:")
-            print_dic(self.dyn_randomization_params)
-            print("###############################################")
-            self.dynamics_params = self.dynamics_params_def
+        # if self.verbose:
+        #     print("###############################################")
+        #     print("DYN RANDOMIZATION PARAMS:")
+        #     print_dic(self.dyn_randomization_params)
+        #     print("###############################################")
+        #     self.dynamics_params = self.dynamics_params_def
 
         ###############################################################################
         ## OBSERVATIONS
@@ -836,7 +836,7 @@ class QuadrotorEnv(gym.Env, Serializable):
         self._reset()
 
         if self.spec is None:
-            self.spec = gym_reg.EnvSpec(id='Quadrotor-v0', max_episode_steps=self.ep_len)
+            self.spec = gym_reg.EnvSpec(id='Quadrotor-v0', max_episode_steps=self.ep_len, entry_point='gym_art.envs:QuadrotorEnv')
         
         # Always call Serializable constructor last
         Serializable.quick_init(self, locals())
@@ -1093,7 +1093,7 @@ class QuadrotorEnv(gym.Env, Serializable):
         if self.resample_goal:
             self.goal = np.array([0., 0., np.random.uniform(0.5, 2.0)])
         else:
-            self.goal = np.array([0., 0., 2.])
+            self.goal = np.array([7., 7., 4.]) # x, y, z
 
         ## CURRICULUM (NOT REALLY NEEDED ANYMORE)
         # from 0.5 to 10 after 100k episodes (a form of curriculum)
@@ -1107,6 +1107,9 @@ class QuadrotorEnv(gym.Env, Serializable):
             y = self.goal[1]
         #Since being near the groud means crash we have to start above
         if z < 0.25 : z = 0.25 
+
+        # Manual setup
+        x, y, z = 1., 1., 2.0
         pos = npa(x, y, z)
 
         ##############################################################
@@ -1372,6 +1375,8 @@ def test_rollout(quad, dyn_randomize_every=None, dyn_randomization_ratio=None,
     if plot_step is not None or plot_dyn_change:
         plt.show(block=False)
         input("Press Enter to continue...")
+
+    # Save actions and thrusts to csv for training
 
 
 def benchmark(quad, dyn_randomize_every=None, dyn_randomization_ratio=None, 

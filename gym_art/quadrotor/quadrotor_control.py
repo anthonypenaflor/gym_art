@@ -3,6 +3,7 @@ from numpy.linalg import norm
 import gym
 from gym import spaces
 from gym_art.quadrotor.quad_utils import *
+import tensorflow as tf
 
 GRAV = 9.81
 #import line_profiler
@@ -304,9 +305,9 @@ class NonlinearPositionController(object):
         self.tf_control = tf_control
         if tf_control:
             self.step_func = self.step_tf
-            self.sess = tf.Session()
+            # self.sess = tf.Session()
             self.thrusts_tf = self.step_graph_construct(Jinv_=self.Jinv, observation_provided=True)
-            self.sess.run(tf.global_variables_initializer())
+            # self.sess.run(tf.global_variables_initializer())
         else:
             self.step_func = self.step
 
@@ -385,7 +386,7 @@ class NonlinearPositionController(object):
         self.action = result[0].squeeze()
         dynamics.step(self.action, dt)
 
-    def step_graph_construct(self, Jinv_=None, observation_provided=False):
+    def step_graph_construct(self, Jinv_=None, observation_provided=True):
         # import tensorflow as tf
         self.observation_provided = observation_provided
         with tf.variable_scope('MellingerControl'):
