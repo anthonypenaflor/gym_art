@@ -92,6 +92,7 @@ class QuadrotorDynamics(object):
         self.vxyz_max = 3. #m/s
         self.gravity = gravity
         self.acc_max = 3. * GRAV
+        self.destination_reached_threshold = 0.1  # Distance threshold to consider destination reached
 
         ###############################################################
         ## Internal State variables
@@ -590,6 +591,28 @@ def compute_reward_weighted(dynamics, goal, action, dt, crashed, time_remain, re
     cost_crash_raw = float(crashed)
     cost_crash = rew_coeff["crash"] * cost_crash_raw
 
+    ##################################################
+    ## Additional reward for moving towards destination
+    # Calculate velocity component in direction of destination
+    to_dest = goal - dynamics.pos
+    to_dest_norm = np.linalg.norm(to_dest)
+    if to_dest_norm > 0:
+        to_dest_unit = to_dest / to_dest_norm
+        vel_towards_dest = np.dot(dynamics.vel, to_dest_unit)
+        cost_progress_raw = -vel_towards_dest  # Negative because we want to maximize progress
+        cost_progress = rew_coeff.get("progress", 0.5) * cost_progress_raw
+    else:
+        cost_progress = 0
+
+    ##################################################
+    ## Reward for reaching destination
+    if to_dest_norm < dynamics.destination_reached_threshold:
+        cost_reached_raw = 1.0
+        cost_reached = rew_coeff.get("reached", 10.0) * cost_reached_raw
+    else:
+        cost_reached_raw = 0.0
+        cost_reached = 0.0
+
     reward = -dt * np.sum([
         cost_pos,
         cost_effort,
@@ -600,9 +623,10 @@ def compute_reward_weighted(dynamics, goal, action, dt, crashed, time_remain, re
         cost_attitude,
         cost_spin,
         cost_act_change,
-        cost_vel
+        cost_vel,
+        cost_progress,
+        -cost_reached  # Positive reward for reaching destination
     ])
-    
 
     rew_info = {
         "rew_main": -cost_pos,
@@ -616,6 +640,8 @@ def compute_reward_weighted(dynamics, goal, action, dt, crashed, time_remain, re
         "rew_spin": -cost_spin,
         "rew_act_change": -cost_act_change,
         "rew_vel": -cost_vel,
+        "rew_progress": -cost_progress,
+        "rew_reached": cost_reached,
 
         "rewraw_main": -cost_pos_raw,
         'rewraw_pos': -cost_pos_raw,
@@ -628,6 +654,8 @@ def compute_reward_weighted(dynamics, goal, action, dt, crashed, time_remain, re
         "rewraw_spin": -cost_spin_raw,
         "rewraw_act_change": -cost_act_change_raw,
         "rewraw_vel": -cost_vel_raw,
+        "rewraw_progress": -cost_progress_raw,
+        "rewraw_reached": cost_reached_raw,
     }
 
     if np.isnan(reward) or not np.isfinite(reward):
@@ -702,6 +730,8 @@ class QuadrotorEnv(gym.Env, gym_utils.EzPickle):
         self.update_sense_noise(sense_noise=sense_noise)
         self.gravity = gravity
         self.resample_goal = resample_goal
+        self.current_destination = None  # Track current destination
+        self.destination_reached_threshold = 0.1  # Distance threshold to consider destination reached
         ## t2w and t2t ranges
         self.t2w_std = t2w_std
         self.t2w_min = 1.5
@@ -942,7 +972,6 @@ class QuadrotorEnv(gym.Env, gym_utils.EzPickle):
     def _step(self, action):
         self.actions[1] = copy.deepcopy(self.actions[0])
         self.actions[0] = copy.deepcopy(action)
-        # print('actions_norm: ', np.linalg.norm(self.actions[0]-self.actions[1]))
 
         pos, vel, rot, omega, acc = self.sense_noise.add_noise(
                     pos=self.dynamics.pos,
@@ -952,7 +981,6 @@ class QuadrotorEnv(gym.Env, gym_utils.EzPickle):
                     acc=self.dynamics.accelerometer,
                     dt=self.dt
                 )
-        # print("accelerations:", self.dynamics.accelerometer, "noise_raio:", np.abs(self.dynamics.accelerometer-acc)/np.abs(self.dynamics.accelerometer))
 
         if self.excite and self.tick % 5 == 0:
             ## change the goal every 5 time step
@@ -961,15 +989,11 @@ class QuadrotorEnv(gym.Env, gym_utils.EzPickle):
                 np.random.uniform(low=1.5, high=2.5, size=(1,))
             ])
 
-        # if not self.crashed:
-        # print('goal: ', self.goal, 'goal_type: ', type(self.goal))
         self.controller.step_func(dynamics=self.dynamics,
                                 action=action,
                                 goal=self.goal,
                                 dt=self.dt,
                                 observation=np.expand_dims(self.state_vector(self), axis=0))
-        # self.oracle.step(self.dynamics, self.goal, self.dt)
-        # self.scene.update_state(self.dynamics, self.goal)
 
         if self.obstacles is not None:
             self.crashed = self.obstacles.detect_collision(self.dynamics)
@@ -984,9 +1008,12 @@ class QuadrotorEnv(gym.Env, gym_utils.EzPickle):
         reward, rew_info = compute_reward_weighted(self.dynamics, self.goal, action, self.dt, self.crashed, self.time_remain, 
                             rew_coeff=self.rew_coeff, action_prev=self.actions[1])
         self.tick += 1
-        done = self.tick > self.ep_len #or self.crashed
-        sv = self.state_vector(self)
         
+        # Check if destination is reached
+        destination_reached = self.is_destination_reached()
+        done = self.tick > self.ep_len or self.crashed or destination_reached
+        
+        sv = self.state_vector(self)
         self.traj_count += int(done)
         
         ## TODO: OPTIMIZATION: sv_comp should be a dictionary formed when state() function is called
@@ -1024,8 +1051,25 @@ class QuadrotorEnv(gym.Env, gym_utils.EzPickle):
             "dt": [self.dt * self.sim_steps],
         }
 
-        # print(sv, obs_comp, dyn_params, self.obs_comp_sizes)      
-        return sv, reward, done, {'rewards': rew_info, "obs_comp": obs_comp, "dyn_params": dyn_params}
+        info = {
+            'rewards': rew_info,
+            'obs_comp': obs_comp,
+            'dyn_params': dyn_params,
+            'destination_reached': destination_reached,
+            'distance_to_destination': np.linalg.norm(self.goal - self.dynamics.pos)
+        }
+        
+        return sv, reward, done, info
+
+    def is_destination_reached(self):
+        """Check if the quadrotor has reached its current destination.
+        
+        Returns:
+            bool: True if the quadrotor is within the destination_reached_threshold of the goal
+        """
+        if self.current_destination is None:
+            return False
+        return np.linalg.norm(self.current_destination - self.dynamics.pos) < self.destination_reached_threshold
 
     def resample_dynamics(self):
         """
@@ -1056,7 +1100,13 @@ class QuadrotorEnv(gym.Env, gym_utils.EzPickle):
         self.update_dynamics(dynamics_params=self.dynamics_params)
 
 
-    def _reset(self):
+    def _reset(self, destination=None):
+        """Reset the environment and optionally set a new destination.
+        
+        Args:
+            destination (np.array, optional): 3D coordinates [x, y, z] of the destination. 
+                                           If None, uses default behavior.
+        """
         ## I have to update state vector 
         ##############################################################
         ## DYNAMICS RANDOMIZATION AND UPDATE       
@@ -1074,11 +1124,14 @@ class QuadrotorEnv(gym.Env, gym_utils.EzPickle):
             self.scene.update_model(self.dynamics.model)
 
         ##############################################################
-        ## GOAL
-        if self.resample_goal:
+        ## GOAL/DESTINATION
+        if destination is not None:
+            self.goal = self.set_destination(destination)
+        elif self.resample_goal:
             self.goal = np.array([0., 0., np.random.uniform(0.5, 2.0)])
         else:
             self.goal = np.array([0., 0., 2.])
+            self.current_destination = self.goal.copy()
 
         ## CURRICULUM (NOT REALLY NEEDED ANYMORE)
         # from 0.5 to 10 after 100k episodes (a form of curriculum)
@@ -1144,17 +1197,39 @@ class QuadrotorEnv(gym.Env, gym_utils.EzPickle):
         state = self.state_vector(self)
         return state
 
+    def reset(self, destination=None):
+        """Reset the environment and optionally set a new destination.
+        
+        Args:
+            destination (np.array, optional): 3D coordinates [x, y, z] of the destination. 
+                                           If None, uses default behavior.
+        """
+        return self._reset(destination)
+
     def _render(self, mode='human', close=False):
         return self.scene.render_chase(dynamics=self.dynamics, goal=self.goal, mode=mode)
     
-    def reset(self):
-        return self._reset()
-
     def render(self, mode='human', **kwargs):
         return self._render(mode, **kwargs)
     
     def step(self, action):
         return self._step(action)
+
+    def set_destination(self, destination):
+        """Set a new destination for the quadrotor to navigate to.
+        
+        Args:
+            destination (np.array): 3D coordinates [x, y, z] of the destination
+        """
+        if not isinstance(destination, np.ndarray):
+            destination = np.array(destination)
+        if destination.shape != (3,):
+            raise ValueError("Destination must be a 3D point [x, y, z]")
+            
+        # Clip destination to room bounds
+        destination = np.clip(destination, a_min=self.room_box[0], a_max=self.room_box[1])
+        self.current_destination = destination
+        return destination
 
 class DummyPolicy(object):
     def __init__(self, dt=0.01, switch_time=2.5):
