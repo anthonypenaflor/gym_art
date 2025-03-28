@@ -9,25 +9,44 @@ def main():
         raw_control=False,  # Use NonlinearPositionController instead of raw control
         dim_mode='3D',     # Full 3D control
         sim_freq=200.,     # Simulation frequency
-        ep_time=10.,       # Episode time in seconds
+        ep_time=60.,       # Increased episode time to 60 seconds
         room_size=10,      # Room size
         init_random_state=True,  # Start with random state
         obs_repr="xyz_vxyz_R_omega"  # Observation representation
     )
 
-    # Set a custom destination (x, y, z coordinates)
-    destination = np.array([2.0, 1.0, 1.5])
-    env.set_destination(destination)
-
-    # Reset the environment
+    # Define multiple destination points (x, y, z coordinates) with more spacing
+    destinations = [
+        np.array([3.0, 2.0, 2.0]),    # First destination - far right and up
+        np.array([-2.0, -2.0, 1.5]),  # Second destination - far left and down
+        np.array([0.0, 0.0, 1.0]),    # Third destination - center
+        np.array([2.0, -2.0, 2.0])    # Fourth destination - right and down
+    ]
+    
+    # Define destination tolerance (in meters)
+    destination_tolerance = 0.1  # 10cm tolerance
+    
+    # Reset environment once at the start
     state = env.reset()
-
+    
+    # Set initial destination
+    current_dest_idx = 0
+    env.set_destination(destinations[current_dest_idx])
+    
     # Run the environment
     done = False
-    episode_reward = 0
+    total_reward = 0
     step_count = 0
-
-    while not done:
+    max_steps = int(env.ep_time / env.dt)  # Maximum steps per episode
+    stabilization_steps = 50  # Number of steps to wait after reaching a destination
+    
+    print(f"\nStarting navigation to destination {current_dest_idx + 1}: {destinations[current_dest_idx]}")
+    print(f"Maximum steps per episode: {max_steps}")
+    print(f"Destination tolerance: {destination_tolerance}m")
+    print(f"Stabilization steps between destinations: {stabilization_steps}")
+    
+    stabilization_counter = 0
+    while current_dest_idx < len(destinations):
         # First, let the controller compute the action
         env.controller.step_func(
             dynamics=env.dynamics,
@@ -41,26 +60,51 @@ def main():
         state, reward, done, info = env.step(env.controller.action)
         
         # Accumulate reward
-        episode_reward += reward
+        total_reward += reward
         
         # Print information about the current state
         print(f"Step {step_count}")
         print(f"Position: {env.dynamics.pos}")
         print(f"Distance to destination: {info['distance_to_destination']:.2f}")
-        print(f"Destination reached: {info['destination_reached']}")
+        print(f"Destination reached: {info['distance_to_destination'] < destination_tolerance}")
         print(f"Reward: {reward:.2f}")
         print("---")
         
         # Optional: Render the environment
         env.render()
         
-        # Small delay to make visualization more manageable
-        # time.sleep(0.01)
-        
         step_count += 1
-
-    print(f"Episode finished after {step_count} steps")
-    print(f"Total reward: {episode_reward:.2f}")
+        
+        # Check if current destination is reached (using tolerance)
+        if info['distance_to_destination'] < destination_tolerance:
+            if stabilization_counter == 0:
+                print(f"\nDestination {current_dest_idx + 1} reached!")
+                print(f"Final distance: {info['distance_to_destination']:.3f}m")
+                stabilization_counter = stabilization_steps
+            else:
+                stabilization_counter -= 1
+                if stabilization_counter == 0:
+                    # Move to next destination if available
+                    current_dest_idx += 1
+                    if current_dest_idx < len(destinations):
+                        # Just update the destination without resetting
+                        env.set_destination(destinations[current_dest_idx])
+                        print(f"Proceeding to destination {current_dest_idx + 1}: {destinations[current_dest_idx]}")
+                    else:
+                        print("\nAll destinations reached successfully!")
+                        break
+        
+        # Check if we've exceeded maximum steps
+        if step_count >= max_steps:
+            print(f"\nEpisode ended due to maximum steps ({max_steps})")
+            print(f"Current destination {current_dest_idx + 1} not reached")
+            print(f"Final distance to destination: {info['distance_to_destination']:.2f}")
+            break
+    
+    print(f"\nEpisode finished!")
+    print(f"Total steps: {step_count}")
+    print(f"Total reward: {total_reward:.2f}")
+    print(f"Final destination index: {current_dest_idx + 1}/{len(destinations)}")
     env.close()
 
 if __name__ == "__main__":

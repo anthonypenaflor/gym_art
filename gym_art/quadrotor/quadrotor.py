@@ -1229,6 +1229,7 @@ class QuadrotorEnv(gym.Env, gym_utils.EzPickle):
         # Clip destination to room bounds
         destination = np.clip(destination, a_min=self.room_box[0], a_max=self.room_box[1])
         self.current_destination = destination
+        self.goal = destination  # Update the goal that the controller uses
         return destination
 
 class DummyPolicy(object):
